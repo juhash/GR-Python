@@ -1,2 +1,2 @@
-# GR; Schwarzschild
-Workflow for solving for the schwarzschild metric and visualizing key concepts 
+# GR; Python
+Tests on solving for curved spacetime geodesics and whatnot. Will drop here Python files with certain "basics" that are useful to remember
