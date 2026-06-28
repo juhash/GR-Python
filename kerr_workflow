@@ -1,0 +1,394 @@
+# Kerr Metric Workflow
+
+This notebook is the Kerr-background copy of the generic GR workflow. The code is identical to the generic version, but the metric is set to the Kerr metric in Boyer-Lindquist coordinates (parameters `M` and `a`).
+Replace parameters or metric entries if you want to experiment with other backgrounds.
+# If needed, install dependencies (uncomment to run):
+# !pip install sympy numpy scipy matplotlib plotly
+
+import sympy as sp
+import numpy as np
+from scipy.integrate import solve_ivp
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+
+print('Imports ready: sympy, numpy, scipy, matplotlib, plotly')
+## Where to edit your metric
+
+This notebook uses indexed coordinates `coords[0..3]` with the convention: 0=t, 1=r, 2=theta, 3=phi.
+Edit the metric cell (below) to change components; for Kerr the important parameters are `M` (mass) and `a` (spin).
+# --- Metric configuration & assembly (Kerr, index-based) ---
+n = 4
+coords = sp.symbols('x0:4')
+t, r, theta, phi = coords
+g_components = {}
+def set_g(i, j, expr):
+    if not (0 <= i < 4 and 0 <= j < 4):
+        raise IndexError('indices must be 0..3')
+    expr = sp.sympify(expr)
+    if i <= j:
+        g_components[(i, j)] = expr
+    else:
+        g_components[(j, i)] = expr
+
+# Symbolic parameters: mass M and Kerr spin a
+M, a = sp.symbols('M a')
+# Default numeric substitution map for numeric runs (edit values here)
+params_subs = globals().get('params_subs', {M: 1.0, a: 0.5})
+
+# Kerr metric in Boyer-Lindquist coordinates (signature -,+,+,+)
+Sigma = r**2 + a**2 * sp.cos(theta)**2
+Delta = r**2 - 2*M*r + a**2
+
+# Populate metric components (index convention: 0=t,1=r,2=theta,3=phi)
+g_components.clear()
+set_g(0, 0, -(1 - 2*M*r/Sigma))
+set_g(0, 3, -2*M*a*r*sp.sin(theta)**2/Sigma)
+set_g(1, 1, Sigma/Delta)
+set_g(2, 2, Sigma)
+set_g(3, 3, ((r**2 + a**2) + 2*M*a**2*r*sp.sin(theta)**2/Sigma) * sp.sin(theta)**2)
+
+# Assemble metric matrix
+g = sp.zeros(4)
+for (i, j), val in g_components.items():
+    g[i, j] = sp.simplify(val)
+    g[j, i] = sp.simplify(val)
+
+from IPython.display import display, Markdown
+def display_metric_latex(G):
+    s = sp.latex(G)
+    display(Markdown('$$%s$$' % s))
+
+print('Metric (Kerr) assembled with %d independent component(s).' % len(g_components))
+display_metric_latex(g)
+# --- Inverse metric and determinant (simplified) ---
+g_inv = sp.simplify(g.inv())
+print('Inverse metric g^ab:')
+display_metric_latex(g_inv)
+
+print('\nDeterminant det(g) =')
+detg = sp.simplify(g.det())
+sp.pprint(detg)
+# --- Christoffel symbols (symbolic, simplified) ---
+def compute_christoffel(g, coords):
+    n = 4
+    g_inv = g.inv()
+    Gamma = [[[0 for _ in range(n)] for _ in range(n)] for _ in range(n)]
+    for a in range(n):
+        for b in range(n):
+            for c in range(n):
+                expr = sp.Rational(1, 2) * sum(
+                    g_inv[a, d] * (sp.diff(g[d, c], coords[b]) + sp.diff(g[d, b], coords[c]) - sp.diff(g[b, c], coords[d]))
+                    for d in range(n)
+                )
+                Gamma[a][b][c] = sp.simplify(expr)
+    return Gamma
+
+Gamma = compute_christoffel(g, coords)
+print('Christoffel symbols (non-zero):')
+for a in range(4):
+    for b in range(4):
+        for c in range(4):
+            if Gamma[a][b][c] != 0:
+                print(f'Gamma^{a}_{{{b}{c}}} =')
+                sp.pprint(Gamma[a][b][c])
+# --- Riemann tensor (optional, can be slow) ---
+compute_full_riemann = False  # set True to compute full Riemann
+
+def compute_riemann(Gamma, coords):
+    n = 4
+    R = [[[[0 for _ in range(n)] for _ in range(n)] for _ in range(n)] for _ in range(n)]
+    for a in range(n):
+        for b in range(n):
+            for c in range(n):
+                for d in range(n):
+                    term = sp.diff(Gamma[a][b][d], coords[c]) - sp.diff(Gamma[a][b][c], coords[d])
+                    sum_term = sum(Gamma[a][c][e]*Gamma[e][b][d] - Gamma[a][d][e]*Gamma[e][b][c] for e in range(n))
+                    R[a][b][c][d] = sp.simplify(term + sum_term)
+    return R
+
+if compute_full_riemann:
+    Riemann = compute_riemann(Gamma, coords)
+    print('Computed full Riemann tensor.')
+else:
+    print('Skipped full Riemann computation (set compute_full_riemann=True to enable).')
+# --- Ricci and Einstein tensors (symbolic, simplified) ---
+n = 4
+Ricci = [[0 for _ in range(n)] for _ in range(n)]
+for a in range(n):
+    for b in range(n):
+        s = 0
+        for c in range(n):
+            s += sp.diff(Gamma[c][a][b], coords[c]) - sp.diff(Gamma[c][a][c], coords[b])
+            for d in range(n):
+                s += Gamma[c][c][d]*Gamma[d][a][b] - Gamma[c][b][d]*Gamma[d][a][c]
+        Ricci[a][b] = sp.simplify(s)
+
+print('Ricci tensor R_ab (non-zero):')
+for a in range(n):
+    for b in range(n):
+        if Ricci[a][b] != 0:
+            print(f'R_{a}{b} =')
+            sp.pprint(Ricci[a][b])
+
+R_scalar = sp.simplify(sum(g_inv[a, b]*Ricci[a][b] for a in range(n) for b in range(n)))
+print('\nRicci scalar R =')
+sp.pprint(R_scalar)
+
+G = [[sp.simplify(Ricci[a][b] - sp.Rational(1, 2)*g[a, b]*R_scalar) for b in range(n)] for a in range(n)]
+print('\nEinstein tensor G_ab (non-zero):')
+for a in range(n):
+    for b in range(n):
+        if G[a][b] != 0:
+            print(f'G_{a}{b} =')
+            sp.pprint(G[a][b])
+# --- Geodesic equations (symbolic, simplified) ---
+V = sp.symbols('V0:4')
+d2 = [sp.simplify(-sum(Gamma[a][b][c]*V[b]*V[c] for b in range(4) for c in range(4))) for a in range(4)]
+print('Geodesic second derivatives (symbolic):')
+for a in range(4):
+    print(f'd2 x^{a}/dlambda^2 =')
+    sp.pprint(d2[a])
+# --- Numeric helpers (simplified) ---
+import math
+
+def metric_numeric_from_symbolic(point, params_subs):
+    subs = {coords[i]: point[i] for i in range(4)}
+    subs.update(params_subs)
+    gnum = np.zeros((4, 4), dtype=float)
+    for i in range(4):
+        for j in range(4):
+            gnum[i, j] = float(sp.N(g[i, j].subs(subs)))
+    return gnum
+
+def christoffel_numeric_from_gamma(Gamma, point, params_subs):
+    subs = {coords[i]: point[i] for i in range(4)}
+    subs.update(params_subs)
+    Gnum = np.zeros((4, 4, 4), dtype=float)
+    for a in range(4):
+        for b in range(4):
+            for c in range(4):
+                val = Gamma[a][b][c]
+                Gnum[a, b, c] = float(sp.N(val.subs(subs)))
+    return Gnum
+
+def geodesic_odes_numeric(lambda_val, state, params_subs):
+    pos = state[:4]
+    v = state[4:]
+    Gnum = christoffel_numeric_from_gamma(Gamma, pos, params_subs)
+    dv = np.zeros(4, dtype=float)
+    for a in range(4):
+        s = 0.0
+        for b in range(4):
+            for c in range(4):
+                s += Gnum[a, b, c] * v[b] * v[c]
+        dv[a] = -s
+    return np.concatenate([v, dv])
+
+def normalize_dt_from_spatial(point, spatial_v, params_subs, k=-1):
+    gnum = metric_numeric_from_symbolic(point, params_subs)
+    A = gnum[0, 0]
+    B = 2.0 * np.dot(gnum[0, 1:], spatial_v)
+    C = spatial_v @ gnum[1:, 1:] @ spatial_v - k
+    disc = B * B - 4 * A * C
+    if disc < 0:
+        raise ValueError('No real solution for dt given spatial velocity')
+    x1 = (-B + math.sqrt(disc)) / (2 * A)
+    x2 = (-B - math.sqrt(disc)) / (2 * A)
+    dt = x1 if x1 > 0 else x2
+    return float(dt)
+# --- Numeric example and plotting (Kerr example) ---
+params_subs = params_subs  # use parameter values from metric cell
+
+# Initial conditions (t, r, theta, phi)
+point0 = (0.0, 10.0, float(sp.pi/2), 0.0)
+spatial_v = np.array([0.0, 0.0, 0.1])  # dr/dlambda, dtheta/dlambda, dphi/dlambda
+
+dt0 = normalize_dt_from_spatial(point0, spatial_v, params_subs, k=-1)
+state0 = np.concatenate([np.array(point0, dtype=float), np.array([dt0, *spatial_v], dtype=float)])
+
+sol = solve_ivp(lambda lam, y: geodesic_odes_numeric(lam, y, params_subs), (0, 200), state0, rtol=1e-8, max_step=0.5)
+
+r_sol = sol.y[1]
+th_sol = sol.y[2]
+ph_sol = sol.y[3]
+
+def to_cartesian(rvals, thvals, phvals):
+    x = rvals * np.sin(thvals) * np.cos(phvals)
+    y = rvals * np.sin(thvals) * np.sin(phvals)
+    z = rvals * np.cos(thvals)
+    return x, y, z
+
+x, y, z = to_cartesian(r_sol, th_sol, ph_sol)
+
+# Matplotlib 3D
+fig = plt.figure(figsize=(8,6))
+ax = fig.add_subplot(projection='3d')
+ax.plot(x, y, z)
+ax.set_title('Numeric geodesic (spatial slice)')
+plt.show()
+
+# Plotly interactive
+fig = go.Figure()
+fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode='lines'))
+fig.update_layout(scene=dict(xaxis_title='x', yaxis_title='y', zaxis_title='z'))
+fig.show()
+# --- Transparency: print all symbolic objects and produce curvature + multi-geodesic plots ---
+from IPython.display import display, Markdown
+import time
+
+print('Displaying symbolic objects (LaTeX-rendered):')
+
+print('\nMetric g_ab:')
+display_metric_latex(g)
+
+print('\nInverse metric g^ab:')
+display_metric_latex(g_inv)
+
+print('\nChristoffel symbols (non-zero):')
+for a in range(4):
+    for b in range(4):
+        for c in range(4):
+            expr = sp.simplify(Gamma[a][b][c])
+            if expr != 0:
+                display(Markdown('**Gamma^%d_{%d%d}:**' % (a, b, c)))
+                display(Markdown('$$%s$$' % sp.latex(expr)))
+
+print('\nRicci tensor R_ab (LaTeX):')
+try:
+    Ricci_mat = sp.Matrix(Ricci)
+    display_metric_latex(Ricci_mat)
+except Exception:
+    for a in range(4):
+        for b in range(4):
+            if Ricci[a][b] != 0:
+                display(Markdown('$$R_{{%d}{%d}} = %s$$' % (a, b, sp.latex(sp.simplify(Ricci[a][b])))))
+
+print('\nRicci scalar R:')
+display(Markdown('$$%s$$' % sp.latex(sp.simplify(R_scalar))))
+
+print('\nEinstein tensor G_ab (LaTeX):')
+try:
+    Gmat = sp.Matrix(G)
+    display_metric_latex(Gmat)
+except Exception:
+    for a in range(4):
+        for b in range(4):
+            if G[a][b] != 0:
+                display(Markdown('$$G_{{%d}{%d}} = %s$$' % (a, b, sp.latex(sp.simplify(G[a][b])))))
+
+print('\nGeodesic equations (symbolic, second derivatives):')
+for a in range(4):
+    display(Markdown('$$\frac{d^2 x^{%d}}{d\lambda^2} = %s$$' % (a, sp.latex(sp.simplify(d2[a])))))
+
+# --- Numeric curvature (Kretschmann) via finite-difference Riemann ---
+print('\nComputing Kretschmann scalar on a coarse (r,theta) grid (this may take some time)...')
+
+def compute_riemann_numeric(point, params_subs, h=1e-6):
+    G0 = christoffel_numeric_from_gamma(Gamma, point, params_subs)
+    dGamma = np.zeros((4, 4, 4, 4), dtype=float)
+    for c_idx in range(4):
+        p_plus = list(point)
+        p_minus = list(point)
+        p_plus[c_idx] += h
+        p_minus[c_idx] -= h
+        Gp = christoffel_numeric_from_gamma(Gamma, p_plus, params_subs)
+        Gm = christoffel_numeric_from_gamma(Gamma, p_minus, params_subs)
+        dGc = (Gp - Gm) / (2.0 * h)
+        for a in range(4):
+            for b in range(4):
+                for d in range(4):
+                    dGamma[c_idx, a, b, d] = dGc[a, b, d]
+    Rnum = np.zeros((4, 4, 4, 4), dtype=float)
+    for a in range(4):
+        for b in range(4):
+            for c in range(4):
+                for d in range(4):
+                    term = dGamma[c, a, b, d] - dGamma[d, a, b, c]
+                    sum_term = 0.0
+                    for e in range(4):
+                        sum_term += G0[a, c, e] * G0[e, b, d] - G0[a, d, e] * G0[e, b, c]
+                    Rnum[a, b, c, d] = term + sum_term
+    return Rnum
+
+def kretschmann_numeric(point, params_subs, h=1e-6):
+    gnum = metric_numeric_from_symbolic(point, params_subs)
+    ginvnum = np.linalg.inv(gnum)
+    Rnum = compute_riemann_numeric(point, params_subs, h=h)
+    R_lower = np.einsum('ap,pbcd->abcd', gnum, Rnum)
+    R_up = np.einsum('aq,br,cs,dt,qrst->abcd', ginvnum, ginvnum, ginvnum, ginvnum, R_lower)
+    K = np.einsum('abcd,abcd->', R_lower, R_up)
+    return float(K)
+
+r_samples = 25
+theta_samples = 15
+Mnum = float(params_subs.get(M, 1.0))
+r_min = max(0.1, 2.0*Mnum*1.001)
+r_max = r_min * 8.0
+r_vals = np.linspace(r_min, r_max, r_samples)
+theta_vals = np.linspace(0.05, np.pi - 0.05, theta_samples)
+K_grid = np.zeros((len(theta_vals), len(r_vals)))
+start_time = time.time()
+for i_th, th in enumerate(theta_vals):
+    for i_r, r_val in enumerate(r_vals):
+        pt = (0.0, float(r_val), float(th), 0.0)
+        try:
+            K_grid[i_th, i_r] = kretschmann_numeric(pt, params_subs)
+        except Exception as e:
+            K_grid[i_th, i_r] = np.nan
+end_time = time.time()
+print('Kretschmann grid computed in %.1f s' % (end_time - start_time))
+
+plt.figure(figsize=(8,6))
+K_plot = np.log10(np.nan_to_num(K_grid, nan=0.0) + 1e-20)
+plt.contourf(r_vals, theta_vals, K_plot, levels=60, cmap='inferno')
+plt.colorbar(label='log10(Kretschmann)')
+plt.xlabel('r')
+plt.ylabel('theta')
+plt.title('Kretschmann scalar (log10)')
+plt.show()
+
+fig = go.Figure(data=[go.Surface(x=np.tile(r_vals, (len(theta_vals),1)), y=np.tile(theta_vals[:,None], (1,len(r_vals))), z=K_plot)])
+fig.update_layout(title='Kretschmann (log10) surface', scene=dict(xaxis_title='r', yaxis_title='theta', zaxis_title='log10(K)'))
+fig.show()
+
+# --- Multi-geodesic integration and plotting (5 trajectories) ---
+print('\nIntegrating and plotting 5 sample geodesics (same particle, varied initial conditions):')
+geodesic_sets = [
+    {'name': 'G1', 'point': (0.0, 10.0, float(sp.pi/2), 0.0), 'spatial_v': np.array([0.0, 0.0, 0.12])},
+    {'name': 'G2', 'point': (0.0, 12.0, float(sp.pi/2), 0.0), 'spatial_v': np.array([-0.01, 0.0, 0.15])},
+    {'name': 'G3', 'point': (0.0, 15.0, float(sp.pi/2), 0.0), 'spatial_v': np.array([0.02, 0.0, 0.06])},
+    {'name': 'G4', 'point': (0.0, 20.0, float(sp.pi/2), 0.0), 'spatial_v': np.array([0.0, -0.01, 0.08])},
+    {'name': 'G5', 'point': (0.0, 8.5, float(sp.pi/2), 0.0),  'spatial_v': np.array([-0.03, 0.01, 0.18])},
+]
+
+colors = ['red','blue','green','orange','purple']
+
+fig = plt.figure(figsize=(9,7))
+ax = fig.add_subplot(projection='3d')
+
+plotly_fig = go.Figure()
+
+for i, gs in enumerate(geodesic_sets):
+    try:
+        pt = tuple(float(x) for x in gs['point'])
+        sv = gs['spatial_v']
+        dt0 = normalize_dt_from_spatial(pt, sv, params_subs, k=-1)
+        state0 = np.concatenate([np.array(pt, dtype=float), np.array([dt0, *sv], dtype=float)])
+        sol = solve_ivp(lambda lam, y: geodesic_odes_numeric(lam, y, params_subs), (0, 500), state0, rtol=1e-8, max_step=0.5)
+        r_sol = sol.y[1]
+        th_sol = sol.y[2]
+        ph_sol = sol.y[3]
+        x, y, z = r_sol * np.sin(th_sol) * np.cos(ph_sol), r_sol * np.sin(th_sol) * np.sin(ph_sol), r_sol * np.cos(th_sol)
+        ax.plot(x, y, z, color=colors[i], label=gs['name'])
+        plotly_fig.add_trace(go.Scatter3d(x=x, y=y, z=z, mode='lines', name=gs['name'], line=dict(color=colors[i])))
+    except Exception as e:
+        print('Failed geodesic', gs['name'], 'error:', e)
+
+ax.set_title('Multiple geodesics (spatial slices)')
+ax.legend()
+plt.show()
+
+plotly_fig.update_layout(scene=dict(xaxis_title='x', yaxis_title='y', zaxis_title='z'), title='Multiple geodesics (interactive)')
+plotly_fig.show()
+
+print('\nTransparency run complete. You can now adjust parameters (e.g., `a`) and re-run the notebook from the top.')
