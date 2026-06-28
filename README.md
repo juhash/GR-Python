@@ -1,2 +1,2 @@
 # GR; Schwarzschild
-Clear and intuitive workflow for solving for the schwarzschild metric
+Workflow for solving for the schwarzschild metric and visualizing key concepts 
