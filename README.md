@@ -1,4 +1,4 @@
-# GR-Python — Geodesic Integration Workflows
+# GR-Python - Geodesic Integration Workflows
 
 ## Overview
 
@@ -9,11 +9,11 @@ step-by-step derivation than KerrWave's production code.
 
 ## Contents
 
-- `schwarzschild_workflow_full.ipynb` — geodesic equations in
+- `schwarzschild_workflow_full.ipynb` - geodesic equations in
   Schwarzschild spacetime, derived and integrated from scratch
   (effective potential, radial/angular motion, circular photon orbit
   as a sanity check).
-- `kerr_metric_workflow.ipynb` — extension to Kerr: metric components,
+- `kerr_metric_workflow.ipynb` - extension to Kerr: metric components,
   constants of motion (E, L_z, Q), and geodesic integration in
   Boyer–Lindquist coordinates.
 
